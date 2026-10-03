@@ -24,6 +24,7 @@ import { openSettings } from '../settings/GlobalSettingsModal'
 import { useProviders } from '../../hooks/useProviders'
 import { usePlugins } from '../../hooks/usePlugins'
 import { PluginLogo, findPluginLogoForProvider } from './PluginLogo'
+import { copyToClipboard } from '../../lib/clipboard'
 
 const COMMON_PORTS = [8080, 11434, 8000, 1234, 8888]
 
@@ -1168,7 +1169,12 @@ export function ProviderModal({
 
   async function copyDeviceCode() {
     if (!deviceChallenge?.userCode) return
-    await navigator.clipboard?.writeText(deviceChallenge.userCode)
+    try {
+      await copyToClipboard(deviceChallenge.userCode)
+    } catch {
+      setCodeCopied(false)
+      return
+    }
     if (codeCopiedTimerRef.current !== null) window.clearTimeout(codeCopiedTimerRef.current)
     setCodeCopied(false)
     requestAnimationFrame(() => setCodeCopied(true))

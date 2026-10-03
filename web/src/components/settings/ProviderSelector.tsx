@@ -30,6 +30,7 @@ import { PluginZone } from '../plugins/PluginZone'
 import { PluginModelMeta } from '../plugins/PluginModelMeta'
 import { usePlugins } from '../../hooks/usePlugins'
 import { PluginLogo, findPluginLogoForProvider } from '../shared/PluginLogo'
+import { copyToClipboard } from '../../lib/clipboard'
 
 type ProviderLabelProps = {
   activeProvider: { name: string; isLocal?: boolean } | undefined
@@ -523,7 +524,12 @@ export function ProviderSelector() {
 
   const copyDeviceCode = async () => {
     if (!deviceChallenge?.userCode) return
-    await navigator.clipboard?.writeText(deviceChallenge.userCode)
+    try {
+      await copyToClipboard(deviceChallenge.userCode)
+    } catch {
+      setCodeCopied(false)
+      return
+    }
     if (codeCopiedTimerRef.current !== null) window.clearTimeout(codeCopiedTimerRef.current)
     setCodeCopied(false)
     requestAnimationFrame(() => setCodeCopied(true))
