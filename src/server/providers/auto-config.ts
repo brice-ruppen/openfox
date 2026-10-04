@@ -8,6 +8,7 @@ import { findLmStudioModel } from './lmstudio.js'
 import { ensureVersionPrefix } from '../llm/url-utils.js'
 import { getCatalogEntry } from './model-catalog.js'
 import { hasVisionEvidence } from './vision.js'
+import { fetchOpenAiModelMetadata } from './openai-models.js'
 
 /** Build the standard JSON headers with optional bearer auth. */
 function buildAuthHeaders(apiKey: string | undefined): Record<string, string> {
@@ -124,16 +125,10 @@ async function detectModelInfo(
 }
 
 async function detectVllmInfo(baseUrl: string, apiKey: string | undefined, modelId: string): Promise<ModelInfo> {
-  const response = await fetch(`${ensureVersionPrefix(baseUrl)}/models`, {
-    headers: buildAuthHeaders(apiKey),
-    signal: AbortSignal.timeout(5000),
-  })
-  if (!response.ok) throw new Error(`HTTP ${response.status}`)
-
-  const data = (await response.json()) as { data?: Array<{ id: string; max_model_len?: number }> }
-  const model = data.data?.find((m) => m.id === modelId)
-  if (model?.max_model_len) {
-    return { contextWindow: model.max_model_len, source: 'backend', supportsVision: false }
+  const models = await fetchOpenAiModelMetadata(`${ensureVersionPrefix(baseUrl)}/models`, apiKey)
+  const model = models.find((entry) => entry.id === modelId)
+  if (model?.contextWindow) {
+    return { contextWindow: model.contextWindow, source: 'backend', supportsVision: model.supportsVision ?? false }
   }
   throw new Error('No context window in response')
 }

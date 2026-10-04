@@ -5,6 +5,7 @@ import { createLLMClient, clearModelCache, getModelProfile, type LLMClientWithMo
 import { logger } from './utils/logger.js'
 
 import { parseLmStudioModels } from './providers/lmstudio.js'
+import { fetchOpenAiModelMetadata } from './providers/openai-models.js'
 import { ensureVersionPrefix, stripVersionPrefix, buildModelsUrl } from './llm/url-utils.js'
 import { getCatalogEntry } from './providers/model-catalog.js'
 import { hasVisionEvidence } from './providers/vision.js'
@@ -39,34 +40,8 @@ async function fetchModelsFromBackend(
   url: string,
   apiKey?: string,
 ): Promise<{ id: string; contextWindow: number | undefined; supportsVision?: boolean | undefined }[]> {
-  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
-  if (apiKey) {
-    headers['Authorization'] = `Bearer ${apiKey}`
-  }
-
   try {
-    const response = await fetch(url, { method: 'GET', headers, signal: AbortSignal.timeout(10000) })
-    if (!response.ok) {
-      logger.debug('Failed to fetch models', { url, status: response.status })
-      return []
-    }
-    const data = (await response.json()) as {
-      data?: Array<{
-        id: string
-        max_model_len?: number
-        context_length?: number
-        capabilities?: { vision?: boolean }
-        input_modalities?: string[]
-      }>
-    }
-    if (data.data && Array.isArray(data.data)) {
-      return data.data.map((m) => ({
-        id: m.id,
-        contextWindow: m.max_model_len ?? m.context_length ?? undefined,
-        supportsVision: m.capabilities?.vision || m.input_modalities?.includes('image') ? true : undefined,
-      }))
-    }
-    return []
+    return await fetchOpenAiModelMetadata(url, apiKey)
   } catch (error) {
     logger.debug('Error fetching models', { url, error: error instanceof Error ? error.message : String(error) })
     return []
