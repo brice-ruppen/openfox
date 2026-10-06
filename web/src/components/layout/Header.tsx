@@ -35,7 +35,7 @@ import { PluginZone } from '../plugins/PluginZone'
 import { PluginMenu, usePluginMenuItems } from '../plugins/PluginMenu'
 import { NotificationBell } from '../notifications/NotificationBell'
 import { useNotificationMenuItems } from '../notifications/NotificationCenter'
-import { useIsSplit } from '../../lib/splitPersistence'
+import { SPLIT_ROUTE, useIsSplit } from '../../lib/splitPersistence'
 import { DropdownMenu, type DropdownMenuItem } from '../shared/DropdownMenu'
 
 interface HeaderProps {
@@ -112,6 +112,14 @@ export function Header({ onMenuClick, onCriteriaToggle }: HeaderProps) {
     },
     { capture: true },
   )
+  useBinding(keybindings.openSplitView, () => {
+    if (isSplit || document.querySelector('[data-global-settings]')) return
+    setLocation(SPLIT_ROUTE)
+  })
+  useBinding(isSplit ? keybindings.sessionSearch : null, () => {
+    if (document.querySelector('[data-global-settings]')) return
+    onMenuClick?.()
+  })
 
   useEffect(() => {
     startAutoRefresh()

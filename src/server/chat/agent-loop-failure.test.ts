@@ -11,7 +11,7 @@
  */
 
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import type { TurnMetrics } from './stream-pure.js'
+import type { PureStreamResult, TurnMetrics } from './stream-pure.js'
 import type { TopLevelLoopConfig } from './agent-loop.js'
 
 vi.mock('../events/store.js', () => ({
@@ -149,7 +149,7 @@ describe('agent loop LLM failure handling', () => {
     }
   }
 
-  function erroredResult(error: string) {
+  function erroredResult(error: string): PureStreamResult {
     return {
       content: '',
       toolCalls: [],
@@ -163,7 +163,7 @@ describe('agent loop LLM failure handling', () => {
     }
   }
 
-  function successResult(content: string) {
+  function successResult(content: string): PureStreamResult {
     return {
       content,
       toolCalls: [],
@@ -302,6 +302,42 @@ describe('agent loop LLM failure handling', () => {
     const failedMsg = onMessage.mock.calls.map((c: any[]) => c[0]).find((m: any) => m?.type === 'chat.llm_retry_failed')
     expect(failedMsg).toBeDefined()
     expect(failedMsg.payload).toEqual({ error: 'rate limited', attempts: 1 })
+  })
+
+  it('fails immediately when the provider rejects prompt injection patterns', async () => {
+    const error =
+      'HTTP 403: {"error":{"message":"Request blocked: prompt injection patterns detected","metadata":{"patterns":["role_delimiter_injection"]}}}'
+    vi.mocked(consumeStreamGenerator).mockResolvedValue(erroredResult(error))
+
+    const append = vi.fn()
+    const onMessage = vi.fn()
+    const result = await runTopLevelAgentLoop(
+      makeConfig({ append, onMessage, llmRetryPolicy: FAST_POLICY }),
+      mockTurnMetrics,
+    )
+
+    expect(result.failed?.error).toBe(error)
+    expect(consumeStreamGenerator).toHaveBeenCalledTimes(1)
+    expect(assistantStarts(append)).toHaveLength(0)
+    expect(continuationMessages(append)).toHaveLength(0)
+    expect(onMessage.mock.calls.some(([message]) => message.type === 'chat.llm_retry')).toBe(false)
+    expect(onMessage).toHaveBeenCalledWith(
+      expect.objectContaining({ type: 'chat.llm_retry_failed', payload: { error, attempts: 1 } }),
+    )
+    expect(hasRecentLLMFailure('test-session', 60_000)).toBe(true)
+  })
+
+  it.each([
+    'HTTP 403: provider temporarily unavailable',
+    'HTTP 503: Request blocked: prompt injection patterns detected',
+  ])('preserves the existing retry policy for other failures: %s', async (error) => {
+    vi.mocked(consumeStreamGenerator).mockResolvedValueOnce(erroredResult(error))
+    vi.mocked(consumeStreamGenerator).mockResolvedValueOnce(successResult('ok'))
+
+    const result = await runTopLevelAgentLoop(makeConfig({ llmRetryPolicy: FAST_POLICY }), mockTurnMetrics)
+
+    expect(result.failed).toBeUndefined()
+    expect(consumeStreamGenerator).toHaveBeenCalledTimes(2)
   })
 
   it('records the definitive failure for the chat.retry guard, cleared on success', async () => {

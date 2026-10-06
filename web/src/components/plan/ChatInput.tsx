@@ -1,7 +1,7 @@
 import { useState, useRef, useEffect, useCallback, type Dispatch, type SetStateAction } from 'react'
 import { useT } from '../../hooks/useT'
 import { useSessionStore, useIsRunning, useQueuedMessages } from '../../stores/session'
-import { useScopedPaneState } from '../../stores/session/session-scope'
+import { useScopedPaneState, useIsFocusedSessionScope } from '../../stores/session/session-scope'
 import { useResource } from '../../hooks/useResource'
 import { useWorkflows } from '../../hooks/useWorkflows'
 import { commandsResource, commandResource, skillsResource, selectActiveSkills } from '../../lib/resources'
@@ -173,6 +173,7 @@ export function ChatInput({
     (state) => state.currentSession,
     null,
   )
+  const isFocusedSession = useIsFocusedSessionScope()
   const warmupSentRef = useRef(false)
   const sendingRef = useRef(false)
   const [activeSlashParams, setActiveSlashParams] = useState<string[]>([])
@@ -201,9 +202,9 @@ export function ChatInput({
     if (restoredInput !== null) {
       setInput(restoredInput)
       clearRestoredInput(sessionId)
-      if (shouldAutofocus()) textareaRef.current?.focus()
+      if (isFocusedSession && shouldAutofocus()) textareaRef.current?.focus()
     }
-  }, [restoredInput, setInput, clearRestoredInput])
+  }, [restoredInput, setInput, clearRestoredInput, isFocusedSession])
 
   const resizeTextarea = useCallback(
     (opts: { force?: boolean } = {}) => {
@@ -248,7 +249,7 @@ export function ChatInput({
   }, [sessionId, setInput])
 
   useEffect(() => {
-    if (shouldAutofocus()) textareaRef.current?.focus()
+    if (isFocusedSession && shouldAutofocus()) textareaRef.current?.focus()
     resizeTextarea()
   }, [sessionId, resizeTextarea])
 

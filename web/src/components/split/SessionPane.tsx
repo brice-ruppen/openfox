@@ -76,6 +76,7 @@ export function SessionPane({ sessionId, focused, onFocus, onClose, className }:
         focused ? 'ring-1 ring-inset ring-accent-primary/50' : ''
       }`}
       onClick={onFocus}
+      onFocusCapture={onFocus}
     >
       <div className="flex items-center gap-2 px-2 h-8 border-b border-border bg-secondary shrink-0">
         <span

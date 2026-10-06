@@ -13,6 +13,18 @@ describe('parseKeybindings', () => {
     expect(config.quickAction).toEqual(DEFAULT_KEYBINDINGS.quickAction)
   })
 
+  it('leaves openSplitView unassigned for new and existing configurations', () => {
+    expect(DEFAULT_KEYBINDINGS.openSplitView).toBeNull()
+    expect(parseKeybindings(undefined).openSplitView).toBeNull()
+    expect(parseKeybindings('{}').openSplitView).toBeNull()
+  })
+
+  it('preserves custom and disabled split-view bindings', () => {
+    const binding = { type: 'chord', key: 'v', modifiers: ['ctrl', 'shift'] }
+    expect(parseKeybindings(JSON.stringify({ openSplitView: binding })).openSplitView).toEqual(binding)
+    expect(parseKeybindings(JSON.stringify({ openSplitView: null })).openSplitView).toBeNull()
+  })
+
   it('includes criteriaSidebar in defaults', () => {
     expect(DEFAULT_KEYBINDINGS.criteriaSidebar).toEqual({ type: 'chord', key: 'd', modifiers: ['ctrl'] })
   })

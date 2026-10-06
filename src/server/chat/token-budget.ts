@@ -19,3 +19,13 @@ export function isContextLengthError(message: string | undefined): boolean {
   if (!message) return false
   return CONTEXT_LENGTH_ERROR_PATTERN.test(message)
 }
+
+const PROMPT_INJECTION_REJECTION_PATTERN = /request blocked: prompt injection patterns detected/i
+
+// A provider WAF policy rejection (Anthropic: HTTP 403 "request blocked: prompt
+// injection patterns detected"). Retrying will not clear it, so callers fail
+// fast instead of spending the retry backoff window on it.
+export function isPromptInjectionRejection(error: string | undefined): boolean {
+  if (!error) return false
+  return /^HTTP 403\b/i.test(error) && PROMPT_INJECTION_REJECTION_PATTERN.test(error)
+}

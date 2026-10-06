@@ -5,6 +5,8 @@ import { flushSync } from 'react-dom'
 import { act } from 'react'
 import { RunningIndicator } from './RunningIndicator'
 import { useSessionStore } from '../../stores/session'
+import { SessionScopeProvider } from '../../stores/session/session-scope'
+import { emptyPane } from '../../stores/session/panes'
 import type { Session } from '@shared/types.js'
 
 // This file drives a live 1s ticker via fake timers, so enable React's act()
@@ -64,6 +66,11 @@ beforeEach(() => {
     pendingPathConfirmations: [],
     activeWorkflowExecution: null,
     abortInProgress: false,
+    // Isolate split-view state: a lingering pane/focus from another test must
+    // not leak into these flat-backed assertions.
+    panes: {},
+    openSessionIds: [],
+    focusedSessionId: null,
   })
 })
 
@@ -491,5 +498,69 @@ describe('RunningIndicator — pause states', () => {
     const container = render()
     const el = container.querySelector('[data-testid="session-status-indicator"]')
     expect(el?.getAttribute('data-state')).toBe('waiting')
+  })
+})
+
+describe('RunningIndicator — split view (per-pane scoping)', () => {
+  // Render an indicator bound to a specific pane via the split-view provider,
+  // exactly how ChatInput renders it inside SessionPane.
+  function renderScoped(sessionId: string): HTMLElement {
+    const container = document.createElement('div')
+    document.body.appendChild(container)
+    const root = createRoot(container)
+    roots.push(root)
+    flushSync(() =>
+      root.render(
+        <SessionScopeProvider value={sessionId}>
+          <RunningIndicator />
+        </SessionScopeProvider>,
+      ),
+    )
+    return container
+  }
+
+  it('shows "Running" only in the running pane, not in idle sibling panes', () => {
+    useSessionStore.setState({
+      focusedSessionId: 's-mid',
+      panes: {
+        's-left': { ...emptyPane(), session: makeSession({ id: 's-left', phase: 'build', isRunning: false }) },
+        's-mid': { ...emptyPane(), session: makeSession({ id: 's-mid', phase: 'build', isRunning: true }) },
+        's-right': { ...emptyPane(), session: makeSession({ id: 's-right', phase: 'build', isRunning: false }) },
+      },
+      // The flat "current" aliases mirror the focused (middle) pane, which is
+      // running — this is what the unscoped (buggy) reads would pick up.
+      currentSession: makeSession({ id: 's-mid', phase: 'build', isRunning: true }),
+      messages: [],
+      pendingQuestions: [],
+      pendingPathConfirmations: [],
+      activeWorkflowExecution: null,
+    })
+
+    const left = renderScoped('s-left')
+    const mid = renderScoped('s-mid')
+    const right = renderScoped('s-right')
+
+    expect(mid.querySelector('[data-testid="session-status-indicator"]')?.textContent).toContain('Running')
+    // Idle siblings must not inherit the focused pane's running state.
+    expect(left.querySelector('[data-testid="session-status-indicator"]')).toBeNull()
+    expect(right.querySelector('[data-testid="session-status-indicator"]')).toBeNull()
+  })
+
+  it('shows the "esc to interrupt" hint only in the running pane', () => {
+    useSessionStore.setState({
+      focusedSessionId: 's-mid',
+      panes: {
+        's-left': { ...emptyPane(), session: makeSession({ id: 's-left', phase: 'build', isRunning: false }) },
+        's-mid': { ...emptyPane(), session: makeSession({ id: 's-mid', phase: 'build', isRunning: true }) },
+      },
+      currentSession: makeSession({ id: 's-mid', phase: 'build', isRunning: true }),
+    })
+
+    const left = renderScoped('s-left')
+    const mid = renderScoped('s-mid')
+
+    expect(mid.querySelector('[data-testid="session-status-indicator"]')?.textContent).toContain('esc to interrupt')
+    // The idle pane renders no indicator at all, so the hint cannot leak into it.
+    expect(left.querySelector('[data-testid="session-status-indicator"]')).toBeNull()
   })
 })

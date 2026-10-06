@@ -43,6 +43,7 @@ vi.mock('../../stores/session', () => ({
 
 vi.mock('../../stores/session/session-scope', () => ({
   useSessionScope: () => null,
+  useIsFocusedSessionScope: () => true,
   useScopedPaneState: (_id: unknown, _sel: unknown, fallback: unknown) => fallback,
 }))
 

@@ -4,7 +4,7 @@ import { useConfigStore, getBackendDisplayName, type Provider } from '../../stor
 import { useProviders } from '../../hooks/useProviders'
 import { useConfig } from '../../hooks/useConfig'
 import { useSessionStore } from '../../stores/session'
-import { useSessionScope, useScopedPaneState } from '../../stores/session/session-scope'
+import { useSessionScope, useScopedPaneState, useIsFocusedSessionScope } from '../../stores/session/session-scope'
 import { useResource } from '../../hooks/useResource'
 import { agentsResource } from '../../lib/resources'
 import { getAgentColor } from '../../lib/agents-actions'
@@ -219,7 +219,8 @@ export function ProviderSelector() {
   const [favoritesExpanded, setFavoritesExpanded] = useState(!collapseFavoritesByDefault)
 
   const keybindings = useKeybindings()
-  useBinding(keybindings.modelSelector, () => setIsOpen((prev) => !prev))
+  const isFocusedSession = useIsFocusedSessionScope()
+  useBinding(isFocusedSession ? keybindings.modelSelector : null, () => setIsOpen((prev) => !prev))
 
   // Derive effective provider and model:
   // Agent override takes precedence, then session, then global default

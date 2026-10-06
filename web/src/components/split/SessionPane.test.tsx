@@ -153,6 +153,12 @@ describe('SessionPane', () => {
     expect(props.onClose).toHaveBeenCalledTimes(1)
   })
 
+  it('activates the pane when a child receives keyboard focus without a click', () => {
+    render(<SessionPane {...props} />)
+    screen.getByRole('link', { name: 'Auth refactor' }).focus()
+    expect(props.onFocus).toHaveBeenCalledTimes(1)
+  })
+
   it('marks the pane as focused', () => {
     render(<SessionPane {...props} focused={true} />)
     expect(document.querySelector('[data-focused="true"]')).not.toBeNull()

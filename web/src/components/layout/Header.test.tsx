@@ -3,6 +3,10 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { createRoot } from 'react-dom/client'
 import { act } from 'react'
 import { clearCache } from '../../lib/resourceCache'
+import { DEFAULT_KEYBINDINGS, parseKeybindings, type KeyBinding } from '../../lib/keybindings'
+import { settingResource, SETTINGS_KEYS } from '../../lib/resources'
+import { KeybindingsTab } from '../settings/tabs/KeybindingsTab'
+import { setLocale } from '@shared/i18n/index.js'
 
 vi.mock('../../lib/ws', () => ({
   wsClient: {
@@ -153,10 +157,14 @@ vi.mock('../../stores/terminal', () => ({
   }),
 }))
 
-vi.mock('../../hooks/useKeybindings', () => ({
-  useKeybindings: vi.fn(() => ({ terminalToggle: { key: 'Control', ctrlKey: true, code: 'ControlLeft' } })),
-  useBinding: vi.fn(),
-}))
+vi.mock('../../hooks/useKeybindings', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../hooks/useKeybindings')>()
+  return {
+    ...actual,
+    useKeybindings: vi.fn(actual.useKeybindings),
+    useBinding: vi.fn(actual.useBinding),
+  }
+})
 
 vi.mock('../../hooks/useWorkdir', () => ({
   useWorkdir: vi.fn(() => '/tmp'),
@@ -538,6 +546,372 @@ describe('Header', () => {
     expect(setLocation).toHaveBeenCalledWith('/')
     const { exitSplitView } = useSessionStore.getState()
     expect(exitSplitView).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Header split-view shortcut', () => {
+  const binding: KeyBinding = { type: 'chord', key: 'v', modifiers: ['ctrl', 'shift'] }
+
+  beforeEach(() => {
+    vi.clearAllMocks()
+    document.body.innerHTML = ''
+    clearCache()
+    setLocale('en')
+    settingResource.write(JSON.stringify({ openSplitView: binding }), SETTINGS_KEYS.KEYBINDINGS)
+  })
+
+  function pressShortcut(extra: KeyboardEventInit = {}) {
+    const event = new KeyboardEvent('keydown', {
+      key: 'v',
+      code: 'KeyV',
+      ctrlKey: true,
+      shiftKey: true,
+      cancelable: true,
+      bubbles: true,
+      ...extra,
+    })
+    act(() => {
+      window.dispatchEvent(event)
+    })
+    return event
+  }
+
+  it.each(['/', '/p/p1/', '/p/p1/s/s1'])('opens the existing split route from %s', async (location) => {
+    const { useLocation } = await import('wouter')
+    const navigate = vi.fn()
+    vi.mocked(useLocation).mockReturnValue([location, navigate])
+    const { Header } = await import('./Header')
+    render(<Header />)
+
+    expect(pressShortcut().defaultPrevented).toBe(true)
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('/split-view')
+    const { useSessionStore } = await import('../../stores/session')
+    expect(useSessionStore.getState().openPane).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().createSession).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().exitSplitView).not.toHaveBeenCalled()
+  })
+
+  it('does not navigate or alter panes when already in split view', async () => {
+    const { useLocation } = await import('wouter')
+    const navigate = vi.fn()
+    vi.mocked(useLocation).mockReturnValue(['/split-view', navigate])
+    const { useSessionStore } = await import('../../stores/session')
+    ;(useSessionStore as unknown as MockStore).setState({ openSessionIds: ['s2', 's1'], focusedSessionId: 's1' })
+    const { Header } = await import('./Header')
+    render(<Header />)
+    pressShortcut()
+    expect(navigate).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().openSessionIds).toEqual(['s2', 's1'])
+    expect(useSessionStore.getState().focusedSessionId).toBe('s1')
+  })
+
+  it('ignores mismatched modifiers and updates immediately when the saved binding changes', async () => {
+    const { useLocation } = await import('wouter')
+    const navigate = vi.fn()
+    vi.mocked(useLocation).mockReturnValue(['/', navigate])
+    const { Header } = await import('./Header')
+    render(<Header />)
+    expect(pressShortcut({ shiftKey: false }).defaultPrevented).toBe(false)
+    expect(navigate).not.toHaveBeenCalled()
+
+    await act(async () => {
+      settingResource.write(JSON.stringify({ openSplitView: null }), SETTINGS_KEYS.KEYBINDINGS)
+    })
+    expect(pressShortcut().defaultPrevented).toBe(false)
+    expect(navigate).not.toHaveBeenCalled()
+
+    await act(async () => {
+      settingResource.write(
+        JSON.stringify({ openSplitView: { type: 'chord', key: 'v', modifiers: ['meta'] } }),
+        SETTINGS_KEYS.KEYBINDINGS,
+      )
+    })
+    pressShortcut()
+    expect(navigate).not.toHaveBeenCalled()
+    pressShortcut({ ctrlKey: false, shiftKey: false, metaKey: true })
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('/split-view')
+  })
+
+  it('supports configured double presses without navigating while Settings is open', async () => {
+    settingResource.write(
+      JSON.stringify({ openSplitView: { type: 'double-press', key: 'Alt', threshold: 300 } }),
+      SETTINGS_KEYS.KEYBINDINGS,
+    )
+    const { useLocation } = await import('wouter')
+    const navigate = vi.fn()
+    vi.mocked(useLocation).mockReturnValue(['/', navigate])
+    const { Header } = await import('./Header')
+    render(<Header />)
+    const settings = document.createElement('div')
+    settings.setAttribute('data-global-settings', '')
+    document.body.appendChild(settings)
+    const press = () => pressShortcut({ key: 'Alt', ctrlKey: false, shiftKey: false, altKey: true })
+    press()
+    press()
+    expect(navigate).not.toHaveBeenCalled()
+    settings.remove()
+    press()
+    press()
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('/split-view')
+  })
+
+  it('records and persists in Settings without navigation, then activates after closing and remounting', async () => {
+    const { authFetch } = await import('../../lib/api')
+    let saved = JSON.stringify({ terminalToggle: null })
+    vi.mocked(authFetch).mockImplementation(async (_url, options) => {
+      if (options?.method === 'PUT') {
+        saved = (JSON.parse(String(options.body)) as { value: string }).value
+      }
+      return { ok: true, json: async () => ({ value: saved }) } as Response
+    })
+    settingResource.write(saved, SETTINGS_KEYS.KEYBINDINGS)
+    const { useLocation } = await import('wouter')
+    const navigate = vi.fn()
+    vi.mocked(useLocation).mockReturnValue(['/', navigate])
+    const { Header } = await import('./Header')
+    render(<Header />)
+    const settings = render(<KeybindingsTab />)
+    settings.setAttribute('data-global-settings', '')
+    const row = Array.from(settings.querySelectorAll('span')).find(
+      (s) => s.textContent === 'Open split view',
+    )?.parentElement
+    expect(row).toBeTruthy()
+    act(() => {
+      row!.querySelector('button')!.click()
+    })
+    await act(async () => {
+      pressShortcut()
+    })
+    expect(parseKeybindings(saved).openSplitView).toEqual(binding)
+    expect(parseKeybindings(saved).terminalToggle).toBeNull()
+    pressShortcut()
+    expect(navigate).not.toHaveBeenCalled()
+    const settingsRoot = mountedRoots.pop()!
+    act(() => {
+      settingsRoot.root.unmount()
+    })
+    settings.remove()
+    pressShortcut()
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('/split-view')
+
+    const headerRoot = mountedRoots.pop()!
+    act(() => {
+      headerRoot.root.unmount()
+    })
+    headerRoot.container.remove()
+    clearCache()
+    navigate.mockClear()
+    await act(async () => {
+      render(<Header />)
+    })
+    pressShortcut()
+    expect(navigate).toHaveBeenCalledExactlyOnceWith('/split-view')
+  })
+
+  it('does not intercept the unassigned default shortcut', async () => {
+    settingResource.write(JSON.stringify(DEFAULT_KEYBINDINGS), SETTINGS_KEYS.KEYBINDINGS)
+    const { useLocation } = await import('wouter')
+    const navigate = vi.fn()
+    vi.mocked(useLocation).mockReturnValue(['/', navigate])
+    const { Header } = await import('./Header')
+    render(<Header />)
+    expect(pressShortcut().defaultPrevented).toBe(false)
+    expect(navigate).not.toHaveBeenCalled()
+  })
+})
+
+describe('Header split-view session search', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    document.body.innerHTML = ''
+    clearCache()
+    setLocale('en')
+    settingResource.write(JSON.stringify(DEFAULT_KEYBINDINGS), SETTINGS_KEYS.KEYBINDINGS)
+  })
+
+  function pressSearch(extra: KeyboardEventInit = {}) {
+    const event = new KeyboardEvent('keydown', {
+      key: 's',
+      code: 'KeyS',
+      ctrlKey: true,
+      cancelable: true,
+      bubbles: true,
+      ...extra,
+    })
+    act(() => {
+      window.dispatchEvent(event)
+    })
+    return event
+  }
+
+  it('toggles the split control panel with Search Sessions without navigating or changing panes', async () => {
+    const { useLocation } = await import('wouter')
+    const navigate = vi.fn()
+    vi.mocked(useLocation).mockReturnValue(['/split-view', navigate])
+    const { useSessionStore } = await import('../../stores/session')
+    ;(useSessionStore as unknown as MockStore).setState({ openSessionIds: ['s2', 's1'], focusedSessionId: 's1' })
+    const toggle = vi.fn()
+    const { Header } = await import('./Header')
+    render(<Header onMenuClick={toggle} />)
+    expect(pressSearch().defaultPrevented).toBe(true)
+    pressSearch()
+    expect(toggle).toHaveBeenCalledTimes(2)
+    expect(navigate).not.toHaveBeenCalled()
+    expect(useSessionStore.getState().openSessionIds).toEqual(['s2', 's1'])
+    expect(useSessionStore.getState().focusedSessionId).toBe('s1')
+    expect(document.querySelector('[data-testid="session-dropdown-menu"]')).toBeNull()
+  })
+
+  it.each(['/', '/p/p1/', '/p/p1/s/s1'])(
+    'leaves the existing non-split search handler alone on %s',
+    async (location) => {
+      const { useLocation } = await import('wouter')
+      vi.mocked(useLocation).mockReturnValue([location, vi.fn()])
+      const toggle = vi.fn()
+      const { Header } = await import('./Header')
+      render(<Header onMenuClick={toggle} />)
+      expect(pressSearch().defaultPrevented).toBe(false)
+      expect(toggle).not.toHaveBeenCalled()
+    },
+  )
+
+  it('honors live custom and disabled Search Sessions bindings', async () => {
+    const { useLocation } = await import('wouter')
+    vi.mocked(useLocation).mockReturnValue(['/split-view', vi.fn()])
+    const toggle = vi.fn()
+    const { Header } = await import('./Header')
+    render(<Header onMenuClick={toggle} />)
+    await act(async () => {
+      settingResource.write(
+        JSON.stringify({ sessionSearch: { type: 'chord', key: 'f', modifiers: ['meta'] } }),
+        SETTINGS_KEYS.KEYBINDINGS,
+      )
+    })
+    expect(pressSearch().defaultPrevented).toBe(false)
+    pressSearch({ key: 'f', code: 'KeyF', ctrlKey: false, metaKey: true })
+    expect(toggle).toHaveBeenCalledTimes(1)
+    await act(async () => {
+      settingResource.write(JSON.stringify({ sessionSearch: null }), SETTINGS_KEYS.KEYBINDINGS)
+    })
+    expect(pressSearch({ key: 'f', code: 'KeyF', ctrlKey: false, metaKey: true }).defaultPrevented).toBe(false)
+    expect(toggle).toHaveBeenCalledTimes(1)
+  })
+
+  it('does not toggle the control panel while Settings is open', async () => {
+    const { useLocation } = await import('wouter')
+    vi.mocked(useLocation).mockReturnValue(['/split-view', vi.fn()])
+    const toggle = vi.fn()
+    const { Header } = await import('./Header')
+    render(<Header onMenuClick={toggle} />)
+    const settings = document.createElement('div')
+    settings.setAttribute('data-global-settings', '')
+    document.body.appendChild(settings)
+    pressSearch()
+    expect(toggle).not.toHaveBeenCalled()
+    settings.remove()
+    pressSearch()
+    expect(toggle).toHaveBeenCalledTimes(1)
+  })
+
+  it('supports a double-press Search Sessions binding', async () => {
+    settingResource.write(
+      JSON.stringify({ sessionSearch: { type: 'double-press', key: 'Alt', threshold: 300 } }),
+      SETTINGS_KEYS.KEYBINDINGS,
+    )
+    const { useLocation } = await import('wouter')
+    vi.mocked(useLocation).mockReturnValue(['/split-view', vi.fn()])
+    const toggle = vi.fn()
+    const { Header } = await import('./Header')
+    render(<Header onMenuClick={toggle} />)
+    pressSearch({ key: 'Alt', ctrlKey: false, altKey: true })
+    expect(toggle).not.toHaveBeenCalled()
+    pressSearch({ key: 'Alt', ctrlKey: false, altKey: true })
+    expect(toggle).toHaveBeenCalledTimes(1)
+  })
+})
+
+describe('Keybindings split-view settings', () => {
+  beforeEach(async () => {
+    vi.clearAllMocks()
+    document.body.innerHTML = ''
+    clearCache()
+    setLocale('en')
+    settingResource.write(JSON.stringify({ terminalToggle: null }), SETTINGS_KEYS.KEYBINDINGS)
+    const { authFetch } = await import('../../lib/api')
+    vi.mocked(authFetch).mockImplementation(async (_url, options) => {
+      const { value } = JSON.parse(String(options?.body)) as { value: string }
+      return { ok: true, json: async () => ({ value }) } as Response
+    })
+  })
+
+  function splitRow(container: HTMLElement, label = 'Open split view') {
+    const row = Array.from(container.querySelectorAll('span')).find((s) => s.textContent === label)?.parentElement
+    if (!row) throw new Error('Split-view keybinding row not found')
+    return row
+  }
+
+  async function click(button: Element | null) {
+    expect(button).toBeTruthy()
+    await act(async () => {
+      button!.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+    })
+  }
+
+  it('renders an unassigned action in English and French', () => {
+    const container = render(<KeybindingsTab />)
+    expect(splitRow(container).querySelector('button')?.textContent).toBe('None')
+    setLocale('fr')
+    const frenchContainer = render(<KeybindingsTab />)
+    expect(splitRow(frenchContainer, 'Ouvrir la vue divisée').querySelector('button')?.textContent).toBe('Aucun')
+    setLocale('en')
+  })
+
+  it('records a chord, clears it, and resets it individually without changing other actions', async () => {
+    const container = render(<KeybindingsTab />)
+    const record = async () => {
+      await click(splitRow(container).querySelector('button'))
+      await act(async () => {
+        window.dispatchEvent(
+          new KeyboardEvent('keydown', { key: 'v', code: 'KeyV', ctrlKey: true, shiftKey: true, bubbles: true }),
+        )
+      })
+    }
+    await record()
+    expect(splitRow(container).querySelector('button')?.textContent).toBe('Ctrl+Shift+V')
+    await click(splitRow(container).querySelector('[aria-label="Remove shortcut for Open split view"]'))
+    expect(splitRow(container).querySelector('button')?.textContent).toBe('None')
+    await record()
+    await click(splitRow(container).querySelector('[aria-label="Reset Open split view to default"]'))
+    expect(splitRow(container).querySelector('button')?.textContent).toBe('None')
+    const { authFetch } = await import('../../lib/api')
+    const lastOptions = vi.mocked(authFetch).mock.calls.at(-1)?.[1]
+    const { value } = JSON.parse(String(lastOptions?.body)) as { value: string }
+    expect(parseKeybindings(value).openSplitView).toBeNull()
+    expect(parseKeybindings(value).terminalToggle).toBeNull()
+  })
+
+  it('cancels recording with Escape and supports double-press recording and reset-all', async () => {
+    const container = render(<KeybindingsTab />)
+    await click(splitRow(container).querySelector('button'))
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape' }))
+    })
+    const { authFetch } = await import('../../lib/api')
+    expect(authFetch).not.toHaveBeenCalled()
+    expect(splitRow(container).querySelector('button')?.textContent).toBe('None')
+    await click(splitRow(container).querySelector('button'))
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', altKey: true }))
+      window.dispatchEvent(new KeyboardEvent('keydown', { key: 'Alt', altKey: true }))
+    })
+    expect(splitRow(container).querySelector('button')?.textContent).toBe('Double Alt')
+    await click(
+      Array.from(container.querySelectorAll('button')).find((b) => b.textContent === 'Reset to defaults') ?? null,
+    )
+    expect(splitRow(container).querySelector('button')?.textContent).toBe('None')
+    const lastOptions = vi.mocked(authFetch).mock.calls.at(-1)?.[1]
+    const { value } = JSON.parse(String(lastOptions?.body)) as { value: string }
+    expect(JSON.parse(value)).toEqual(DEFAULT_KEYBINDINGS)
   })
 })
 

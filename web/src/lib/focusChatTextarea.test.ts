@@ -54,6 +54,24 @@ describe('focusChatTextarea', () => {
     expect(focusSpy).toHaveBeenCalledWith({ preventScroll: false })
   })
 
+  it('restores the composer in the focused split pane instead of the first textarea', () => {
+    const left = document.createElement('div')
+    left.setAttribute('data-split-pane', 'left')
+    left.setAttribute('data-focused', 'false')
+    const right = document.createElement('div')
+    right.setAttribute('data-split-pane', 'right')
+    right.setAttribute('data-focused', 'true')
+    const leftTextarea = document.createElement('textarea')
+    leftTextarea.id = CHAT_TEXTAREA_ID
+    const rightTextarea = document.createElement('textarea')
+    rightTextarea.id = CHAT_TEXTAREA_ID
+    left.appendChild(leftTextarea)
+    right.appendChild(rightTextarea)
+    document.body.append(left, right)
+    focusChatTextarea()
+    expect(document.activeElement).toBe(rightTextarea)
+  })
+
   it('silently does nothing when textarea element does not exist', () => {
     expect(() => focusChatTextarea()).not.toThrow()
     expect(() => focusChatTextarea(true)).not.toThrow()

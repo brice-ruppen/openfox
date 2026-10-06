@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { cleanup, render, screen, fireEvent } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { EffortChangeGateProvider } from '../plan/EffortChangeGate'
+import { SessionScopeProvider } from '../../stores/session/session-scope'
 
 interface MockStore {
   (selector?: (state: any) => any): any
@@ -173,7 +174,8 @@ vi.mock('../../hooks/useResource', () => ({
   useResource: () => ({ data: mockAgentsData, loading: false, error: undefined, refresh: vi.fn() }),
 }))
 
-vi.mock('../../hooks/useKeybindings', () => ({
+vi.mock('../../hooks/useKeybindings', async (importOriginal) => ({
+  ...(await importOriginal<typeof import('../../hooks/useKeybindings')>()),
   useKeybindings: () => ({
     terminalToggle: { type: 'double-press', key: 'Control', threshold: 300 },
     quickAction: { type: 'double-press', key: 'Shift', threshold: 300 },
@@ -185,7 +187,7 @@ vi.mock('../../hooks/useKeybindings', () => ({
       { type: 'chord', key: '4', modifiers: ['ctrl'] },
     ],
   }),
-  useBinding: vi.fn(),
+  useBinding: vi.fn((await importOriginal<typeof import('../../hooks/useKeybindings')>()).useBinding),
   useChordBinding: vi.fn(),
 }))
 
@@ -255,6 +257,7 @@ describe('ProviderSelector', () => {
     })
     await setSessionState({
       currentSession: null,
+      focusedSessionId: null,
       setSessionProvider: vi.fn(),
     })
     await setSettingsState({
@@ -265,6 +268,47 @@ describe('ProviderSelector', () => {
 
   afterEach(() => {
     cleanup()
+  })
+
+  it('opens the model shortcut only in the focused session regardless of pane order', async () => {
+    await setConfigState({ providers: [{ id: 'p1', name: 'Provider', models: [], backend: 'openai' }] })
+    await setSessionState({ focusedSessionId: 'right' })
+    const panes = () => (
+      <EffortChangeGateProvider>
+        <section data-testid="left-selector">
+          <SessionScopeProvider value="left">
+            <ProviderSelector />
+          </SessionScopeProvider>
+        </section>
+        <section data-testid="right-selector">
+          <SessionScopeProvider value="right">
+            <ProviderSelector />
+          </SessionScopeProvider>
+        </section>
+      </EffortChangeGateProvider>
+    )
+    const view = render(panes())
+    fireEvent.keyDown(window, { key: 'm', ctrlKey: true })
+    expect(screen.getByTestId('left-selector').querySelector('[data-testid="provider-dropdown"]')).toBeNull()
+    expect(screen.getByTestId('right-selector').querySelector('[data-testid="provider-dropdown"]')).not.toBeNull()
+    expect(screen.getAllByTestId('provider-dropdown')).toHaveLength(1)
+    fireEvent.keyDown(window, { key: 'm', ctrlKey: true })
+    expect(screen.queryByTestId('provider-dropdown')).toBeNull()
+    await setSessionState({ focusedSessionId: 'left' })
+    view.rerender(panes())
+    fireEvent.keyDown(window, { key: 'm', ctrlKey: true })
+    expect(screen.getByTestId('left-selector').querySelector('[data-testid="provider-dropdown"]')).not.toBeNull()
+    expect(screen.getByTestId('right-selector').querySelector('[data-testid="provider-dropdown"]')).toBeNull()
+    expect(screen.getAllByTestId('provider-dropdown')).toHaveLength(1)
+  })
+
+  it('keeps the model shortcut available outside scoped split panes', async () => {
+    await setConfigState({ providers: [{ id: 'p1', name: 'Provider', models: [], backend: 'openai' }] })
+    renderProviderSelector()
+    fireEvent.keyDown(window, { key: 'm', ctrlKey: true })
+    expect(screen.getByTestId('provider-dropdown')).toBeTruthy()
+    fireEvent.keyDown(window, { key: 'm', ctrlKey: true })
+    expect(screen.queryByTestId('provider-dropdown')).toBeNull()
   })
 
   it('[AUTOMATED] Criterion 3/0 - renders model name without provider prefix when providers list is empty', async () => {
@@ -561,6 +605,7 @@ describe('ProviderSelector search mode (AC 0-5)', () => {
     })
     await setSessionState({
       currentSession: null,
+      focusedSessionId: null,
       setSessionProvider: vi.fn(),
     })
   })

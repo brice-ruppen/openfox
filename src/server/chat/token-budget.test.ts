@@ -2,6 +2,7 @@ import { describe, it, expect } from 'vitest'
 import {
   estimateToolResultTokens,
   isContextLengthError,
+  isPromptInjectionRejection,
   CHARS_PER_TOKEN,
   TOOL_MESSAGE_OVERHEAD_TOKENS,
 } from './token-budget.js'
@@ -56,5 +57,35 @@ describe('isContextLengthError', () => {
     expect(isContextLengthError('HTTP 500: internal server error')).toBe(false)
     expect(isContextLengthError(undefined)).toBe(false)
     expect(isContextLengthError('')).toBe(false)
+  })
+})
+
+describe('isPromptInjectionRejection', () => {
+  it('matches the Anthropic WAF 403 prompt-injection message', () => {
+    expect(
+      isPromptInjectionRejection('HTTP 403: request blocked: prompt injection patterns detected in your request'),
+    ).toBe(true)
+  })
+
+  it('is case-insensitive and does not require exact wording beyond the marker phrase', () => {
+    expect(isPromptInjectionRejection('HTTP 403: Request Blocked: Prompt Injection Patterns Detected')).toBe(true)
+  })
+
+  it('does not match other 403 responses (e.g. auth/permission errors)', () => {
+    expect(isPromptInjectionRejection('HTTP 403: Forbidden')).toBe(false)
+    expect(isPromptInjectionRejection('HTTP 403: invalid API key')).toBe(false)
+  })
+
+  it('does not match the marker phrase under a non-403 status', () => {
+    expect(isPromptInjectionRejection('HTTP 500: request blocked: prompt injection patterns detected')).toBe(false)
+  })
+
+  it('degrades to a retryable failure when the provider rewords the message', () => {
+    expect(isPromptInjectionRejection('HTTP 403: request blocked by security policy')).toBe(false)
+  })
+
+  it('returns false for undefined and empty input', () => {
+    expect(isPromptInjectionRejection(undefined)).toBe(false)
+    expect(isPromptInjectionRejection('')).toBe(false)
   })
 })

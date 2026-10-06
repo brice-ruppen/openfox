@@ -1,8 +1,15 @@
 import { useEffect, useState } from 'react'
-import { useSessionStore } from '../../stores/session'
+import type { PendingQuestion, PendingPathConfirmation } from '../../stores/session'
+import type { Message } from '@shared/types.js'
+import { useSessionScope, useScopedPaneState } from '../../stores/session/session-scope'
 import { projectFromSessionStore, statusLabel, type SessionStatusState } from '../../lib/session-status'
 import { formatTimeSince } from '../../lib/format-date'
 import { useT } from '../../hooks/useT'
+
+// Stable references for zustand selectors (a fresh [] each render would loop).
+const EMPTY_MESSAGES: Message[] = []
+const EMPTY_QUESTIONS: PendingQuestion[] = []
+const EMPTY_CONFIRMATIONS: PendingPathConfirmation[] = []
 
 /**
  * Session status indicator shown at the bottom of the chat.
@@ -16,12 +23,46 @@ import { useT } from '../../hooks/useT'
  */
 export function RunningIndicator() {
   const t = useT()
-  const aborting = useSessionStore((state) => state.abortInProgress)
-  const currentSession = useSessionStore((state) => state.currentSession)
-  const messages = useSessionStore((state) => state.messages)
-  const pendingQuestions = useSessionStore((state) => state.pendingQuestions)
-  const pendingPathConfirmations = useSessionStore((state) => state.pendingPathConfirmations)
-  const activeWorkflowExecution = useSessionStore((state) => state.activeWorkflowExecution)
+  // Scope every read to this pane's session: in split view the flat store
+  // fields mirror the focused pane, so reading them directly would leak the
+  // focused pane's state (e.g. "Running") into every sibling pane.
+  const sessionId = useSessionScope()
+  const aborting = useScopedPaneState(
+    sessionId,
+    (pane) => pane.abortInProgress,
+    (state) => state.abortInProgress,
+    false,
+  )
+  const currentSession = useScopedPaneState(
+    sessionId,
+    (pane) => pane.session ?? null,
+    (state) => state.currentSession,
+    null,
+  )
+  const messages = useScopedPaneState(
+    sessionId,
+    (pane) => pane.messages,
+    (state) => state.messages,
+    EMPTY_MESSAGES,
+  )
+  const pendingQuestions = useScopedPaneState(
+    sessionId,
+    (pane) => pane.pendingQuestions,
+    (state) => state.pendingQuestions,
+    EMPTY_QUESTIONS,
+  )
+  const pendingPathConfirmations = useScopedPaneState(
+    sessionId,
+    (pane) => pane.pendingPathConfirmations,
+    (state) => state.pendingPathConfirmations,
+    EMPTY_CONFIRMATIONS,
+  )
+  const activeWorkflowExecution = useScopedPaneState(
+    sessionId,
+    (pane) => pane.activeWorkflowExecution ?? null,
+    (state) => state.activeWorkflowExecution,
+    null,
+  )
 
   const view = projectFromSessionStore({
     currentSession,

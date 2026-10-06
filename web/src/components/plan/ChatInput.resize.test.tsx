@@ -3,6 +3,7 @@ import '@testing-library/jest-dom/vitest'
 import { cleanup, render, screen } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ChatInput } from './ChatInput'
+import { SessionScopeProvider } from '../../stores/session/session-scope'
 
 const { currentSessionMock } = vi.hoisted(() => ({
   currentSessionMock: { id: 's1', workdir: '/tmp', projectId: 'p1', messageCount: 0 },
@@ -124,6 +125,24 @@ function trackHeightWrites(textarea: HTMLTextAreaElement): string[] {
 }
 
 describe('ChatInput auto-resize', () => {
+  it('does not let an unfocused split composer steal focus on mount or input resize', () => {
+    const panes = (backgroundInput: string) => (
+      <>
+        <SessionScopeProvider value="s1">
+          <ChatInput {...chatProps('focused')} />
+        </SessionScopeProvider>
+        <SessionScopeProvider value="s2">
+          <ChatInput {...chatProps(backgroundInput)} sessionId="s2" />
+        </SessionScopeProvider>
+      </>
+    )
+    const view = render(panes('background'))
+    const [focusedTextarea] = screen.getAllByTestId('chat-input-textarea')
+    expect(document.activeElement).toBe(focusedTextarea)
+    view.rerender(panes('background updated'))
+    expect(document.activeElement).toBe(focusedTextarea)
+  })
+
   it('keeps an empty textarea compact even when the placeholder wraps tall (narrow layout)', () => {
     // Simulate a narrow page: an empty textarea whose wrapped placeholder reports a
     // large scrollHeight (previously inflated the box up to the 200px cap on first draw).

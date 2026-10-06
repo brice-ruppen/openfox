@@ -206,6 +206,12 @@ export function KeybindingsTab() {
       binding: config.criteriaSidebar,
       defaultBinding: DEFAULT_KEYBINDINGS.criteriaSidebar,
     },
+    {
+      id: 'openSplitView',
+      label: t({ en: 'Open split view', fr: 'Ouvrir la vue divisée' }),
+      binding: config.openSplitView,
+      defaultBinding: DEFAULT_KEYBINDINGS.openSplitView,
+    },
     ...config.agentSwitching.map((b, i) => ({
       id: `agentSwitching.${i}`,
       label: t({ en: 'Switch to Agent {{count}}', fr: 'Passer à l’agent {{count}}' }, { count: i + 1 }),
@@ -235,6 +241,8 @@ export function KeybindingsTab() {
         updated.sessionSearch = value
       } else if (id === 'criteriaSidebar') {
         updated.criteriaSidebar = value
+      } else if (id === 'openSplitView') {
+        updated.openSplitView = value
       }
 
       void setSetting(SETTINGS_KEYS.KEYBINDINGS, JSON.stringify(updated))

@@ -46,7 +46,7 @@ import {
   createChatStatsMessage,
 } from '../ws/protocol.js'
 import { executeTools, type ToolBatchContext } from './execute-tools.js'
-import { estimateToolResultTokens, isContextLengthError } from './token-budget.js'
+import { estimateToolResultTokens, isContextLengthError, isPromptInjectionRejection } from './token-budget.js'
 import { loadAllAgentsDefault, getSubAgents } from '../agents/registry.js'
 import { createRetryLimiter, type RetryLimiter } from './retry-limiter.js'
 import { drainQueue } from './drain-queue.js'
@@ -541,7 +541,7 @@ export async function runTopLevelAgentLoop(
         requestFirstFailureAt = Date.now()
       }
       const decision = evaluateLLMRetry(requestFailures, requestFirstFailureAt, Date.now(), retryPolicy)
-      if (!decision.retry) {
+      if (!decision.retry || isPromptInjectionRejection(attemptResult.error)) {
         if (!config.subAgentMetadata) {
           recordLLMFailure(sessionId)
           config.onMessage?.(createChatLLMRetryFailedMessage(attemptResult.error, requestFailures))
