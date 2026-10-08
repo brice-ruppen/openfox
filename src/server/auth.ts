@@ -1,33 +1,13 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
-import { join, dirname, basename } from 'node:path'
+import { dirname } from 'node:path'
 import { createHash, privateDecrypt, createPublicKey, constants } from 'node:crypto'
 import { getRuntimeConfig } from './runtime-config.js'
+import { getAuthConfigPath, getAuthKeyPath } from '../cli/paths.js'
 import type { Mode } from '../cli/main.js'
 
-function getAuthConfigPath(): string {
-  const configDir = getRuntimeConfig()
-  const mode: Mode =
-    configDir.mode === 'development' ? 'development' : configDir.mode === 'test' ? 'test' : 'production'
-
-  if (mode === 'test') {
-    const cwd = process.cwd()
-    const base = basename(cwd) === 'e2e' ? cwd : join(cwd, 'e2e')
-    const testAuthPath = join(base, '.openfox-test', 'auth.json')
-    return testAuthPath
-  }
-
-  const home = process.env['HOME'] || process.env['USERPROFILE'] || ''
-  const basePath = process.env['XDG_CONFIG_HOME'] || `${home}/.config`
-
-  const suffix = mode === 'development' ? '-dev' : ''
-
-  return `${basePath}/openfox${suffix}/auth.json`
-}
-
-function getKeyPath(): string {
-  const authPath = getAuthConfigPath()
-  const dir = dirname(authPath)
-  return join(dir, 'auth.key')
+function resolveMode(): Mode {
+  const mode = getRuntimeConfig().mode
+  return mode === 'development' ? 'development' : mode === 'test' ? 'test' : 'production'
 }
 
 export interface AuthConfig {
@@ -49,7 +29,7 @@ async function loadPrivateKey(): Promise<string> {
     return cachedPrivateKey
   }
 
-  const keyPath = getKeyPath()
+  const keyPath = getAuthKeyPath(resolveMode())
   const keyDir = dirname(keyPath)
 
   try {
@@ -83,7 +63,7 @@ export async function loadServerAuthConfig(): Promise<AuthConfig | null> {
   }
 
   try {
-    const authPath = getAuthConfigPath()
+    const authPath = getAuthConfigPath(resolveMode())
     const data = await readFile(authPath, 'utf-8')
     const authConfig = JSON.parse(data)
     cachedAuth = authConfig

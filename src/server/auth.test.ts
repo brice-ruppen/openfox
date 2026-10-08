@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, vi } from 'vitest'
 import { readFile, writeFile, mkdir } from 'node:fs/promises'
+import { dirname } from 'node:path'
 import type { Config } from '../shared/types.js'
 import {
   requiresAuth,
@@ -523,6 +524,43 @@ describe('auth', () => {
       const publicKeyObj = await import('node:crypto').then((c) => c.createPublicKey(privateKey))
       const exportedPublicKey = publicKeyObj.export({ type: 'spki', format: 'pem' })
       expect(verify.verify(exportedPublicKey, token!, 'base64')).toBe(true)
+    })
+  })
+
+  describe('auth file locations (shared with CLI paths)', () => {
+    const productionConfig: Config = {
+      mode: 'production',
+      llm: { baseUrl: '', model: '', backend: 'unknown', timeout: 300000, idleTimeout: 300000 },
+      context: { maxTokens: 100000, compactionThreshold: 0.85, compactionTarget: 0.6 },
+      agent: { maxIterations: 10, maxConsecutiveFailures: 3, toolTimeout: 120000 },
+      server: { port: 0, host: '127.0.0.1' },
+      database: { path: ':memory:' },
+      logging: { level: 'error' },
+      workdir: '/tmp',
+    }
+
+    it('reads the auth config from the platform path used by the CLI', async () => {
+      const { getAuthConfigPath } = await import('../cli/paths.js')
+      vi.mocked(readFile).mockResolvedValueOnce(JSON.stringify({ strategy: 'network', encryptedPassword: 'x' }))
+      setRuntimeConfig(productionConfig)
+
+      await loadServerAuthConfig()
+
+      expect(vi.mocked(readFile).mock.calls[0]?.[0]).toBe(getAuthConfigPath('production'))
+    })
+
+    it('stores the private key at the platform path used by the CLI', async () => {
+      const { getAuthKeyPath } = await import('../cli/paths.js')
+      vi.mocked(readFile).mockRejectedValueOnce(new Error('ENOENT'))
+      vi.mocked(mkdir).mockResolvedValue(undefined)
+      vi.mocked(writeFile).mockResolvedValue(undefined)
+      setRuntimeConfig(productionConfig)
+
+      await tokenFromPassword('password')
+
+      const expectedKey = getAuthKeyPath('production')
+      expect(vi.mocked(mkdir).mock.calls[0]?.[0]).toBe(dirname(expectedKey))
+      expect(vi.mocked(writeFile).mock.calls[0]?.[0]).toBe(expectedKey)
     })
   })
 })
